@@ -17,6 +17,9 @@ pub struct BuyRecord {
     pub price_per_unit: f64,
     /// 交易签名
     pub signature: String,
+    /// 所属定投计划 ID（可选，用于按计划统计）
+    #[serde(default)]
+    pub plan_id: Option<String>,
 }
 
 /// 持久化数据结构
@@ -45,33 +48,52 @@ impl PnlStore {
         self.buys.push(record);
     }
 
-    /// 总投入（input 人类可读，如 USDC）
-    pub fn total_input_human(&self, input_decimals: u8) -> f64 {
+    /// 总投入（input 人类可读，如 USDC）；可选按 plan_id 过滤
+    pub fn total_input_human(&self, input_decimals: u8, plan_id: Option<&str>) -> f64 {
         let div = 10_f64.powi(input_decimals as i32);
-        self.buys.iter().map(|b| b.input_amount_raw as f64 / div).sum()
+        self.buys
+            .iter()
+            .filter(|b| plan_id.map_or(true, |id| b.plan_id.as_deref() == Some(id)))
+            .map(|b| b.input_amount_raw as f64 / div)
+            .sum()
     }
 
-    /// 总获得 output（raw）
-    pub fn total_output_raw(&self) -> u64 {
-        self.buys.iter().map(|b| b.output_amount_raw).sum()
+    /// 总获得 output（raw）；可选按 plan_id 过滤
+    pub fn total_output_raw(&self, plan_id: Option<&str>) -> u64 {
+        self.buys
+            .iter()
+            .filter(|b| plan_id.map_or(true, |id| b.plan_id.as_deref() == Some(id)))
+            .map(|b| b.output_amount_raw)
+            .sum()
     }
 
-    /// 总获得 output（人类可读）
-    pub fn total_output_human(&self, output_decimals: u8) -> f64 {
+    /// 总获得 output（人类可读）；可选按 plan_id 过滤
+    pub fn total_output_human(&self, output_decimals: u8, plan_id: Option<&str>) -> f64 {
         let div = 10_f64.powi(output_decimals as i32);
-        self.total_output_raw() as f64 / div
+        self.total_output_raw(plan_id) as f64 / div
     }
 
-    /// 成本均价（input per unit output）
-    pub fn avg_cost_per_unit(&self) -> f64 {
-        let out: u64 = self.total_output_raw();
+    /// 成本均价（input per unit output）；可选按 plan_id 过滤
+    pub fn avg_cost_per_unit(&self, plan_id: Option<&str>) -> f64 {
+        let out = self.total_output_raw(plan_id);
         if out == 0 {
             return 0.0;
         }
-        let in_raw: u64 = self.buys.iter().map(|b| b.input_amount_raw).sum();
-        // 需要按 decimals 换算成同一单位再除；这里返回「每 1 个 output 需要多少 input raw 比例」
-        // 实际用人类可读时：total_input_human / total_output_human
+        let in_raw: u64 = self
+            .buys
+            .iter()
+            .filter(|b| plan_id.map_or(true, |id| b.plan_id.as_deref() == Some(id)))
+            .map(|b| b.input_amount_raw)
+            .sum();
         (in_raw as f64) / (out as f64)
+    }
+
+    /// 某计划的买入笔数
+    pub fn buy_count(&self, plan_id: &str) -> usize {
+        self.buys
+            .iter()
+            .filter(|b| b.plan_id.as_deref() == Some(plan_id))
+            .count()
     }
 }
 
@@ -88,16 +110,21 @@ pub struct PnlSummary {
     pub pnl_percent: f64,
 }
 
-/// 根据当前价格计算收益
+/// 根据当前价格计算收益；plan_id 为 None 时统计全部，为 Some 时仅统计该计划
 pub fn compute_pnl(
     store: &PnlStore,
     input_decimals: u8,
     output_decimals: u8,
     current_price_per_unit: f64,
+    plan_id: Option<&str>,
 ) -> PnlSummary {
-    let total_buys = store.buys.len();
-    let total_input_human = store.total_input_human(input_decimals);
-    let total_output_human = store.total_output_human(output_decimals);
+    let total_buys = store
+        .buys
+        .iter()
+        .filter(|b| plan_id.map_or(true, |id| b.plan_id.as_deref() == Some(id)))
+        .count();
+    let total_input_human = store.total_input_human(input_decimals, plan_id);
+    let total_output_human = store.total_output_human(output_decimals, plan_id);
     let avg_cost_per_unit = if total_output_human > 0.0 {
         total_input_human / total_output_human
     } else {

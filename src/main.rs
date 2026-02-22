@@ -3,7 +3,7 @@
 //! 子命令：run（定时执行）、buy（单次买入）、stats（收益统计）
 
 use clap::{Parser, Subcommand};
-use sol_bot::{config::Config, pnl, rpc, swap, wallet, web};
+use sol_bot::{config::Config, plan, pnl, rpc, swap, wallet, web};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -87,6 +87,59 @@ fn pnl_path(cfg: &Config) -> PathBuf {
     cfg.data_dir.join("pnl.json")
 }
 
+fn plans_path(cfg: &Config) -> PathBuf {
+    cfg.data_dir.join("plans.json")
+}
+
+/// 执行一轮定投计划检查（供 serve 后台调度与 run 循环使用）
+async fn run_plan_cycle(state: &web::AppState) {
+    let plans_path = plans_path(&state.config);
+    let pnl_path = pnl_path(&state.config);
+    let mut store = match plan::PlanStore::load_from_path(&plans_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("[定投调度] 加载计划失败 {}: {}", plans_path.display(), e);
+            return;
+        }
+    };
+    let now = chrono::Utc::now();
+    let due = store.due_plans(now);
+    if !due.is_empty() {
+        eprintln!(
+            "[定投调度] 计划文件: {}，共 {} 个计划，{} 个到期",
+            plans_path.display(),
+            store.plans.len(),
+            due.len()
+        );
+    }
+    for p in due {
+        let result = plan::execute_plan(
+            &p,
+            &state.keypair,
+            &state.rpc,
+            &state.api_key,
+            state.config.slippage_bps,
+            &pnl_path,
+        )
+        .await;
+        if let Some(plan) = store.get_mut(&p.id) {
+            match &result {
+                Ok(sig) => {
+                    plan.set_last_run(true, Some(sig.to_string()));
+                    eprintln!("[定投调度] 计划 [{}] 执行成功，已触发 {} 次", plan.name, plan.trigger_count);
+                }
+                Err(e) => {
+                    plan.set_last_run(false, Some(e.to_string()));
+                    eprintln!("[定投调度] 计划 [{}] 执行失败（已记录）: {}", plan.name, e);
+                }
+            }
+        }
+        if let Err(e) = store.save_to_path(&plans_path) {
+            eprintln!("[定投调度] 保存计划失败: {}", e);
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -107,30 +160,79 @@ async fn main() -> anyhow::Result<()> {
         Commands::Run { once } => {
             let keypair = wallet::load_keypair_from_path(&cfg.keypair_path)?;
             let rpc = rpc::SolanaRpc::new(&cfg.rpc_url);
-            let input_mint = cfg.input_mint_pubkey()?;
-            let output_mint = cfg.output_mint_pubkey()?;
-            let amount_raw = cfg.usdc_amount_raw();
             let slippage_bps = cfg.slippage_bps;
+            let pnl_path = pnl_path(&cfg);
+            let plans_path = plans_path(&cfg);
 
-            loop {
-                if let Err(e) = do_buy(
-                    &cfg,
-                    &keypair,
-                    &rpc,
-                    &api_key,
-                    input_mint,
-                    output_mint,
-                    amount_raw,
-                    slippage_bps,
-                )
-                .await
-                {
-                    eprintln!("买入失败: {}", e);
+            let plan_store = plan::PlanStore::load_from_path(&plans_path)?;
+            let has_plans = !plan_store.plans.is_empty();
+
+            if has_plans {
+                let mut store = plan_store;
+                loop {
+                    let now = chrono::Utc::now();
+                    let due = store.due_plans(now);
+                    for p in due {
+                        let result = plan::execute_plan(
+                            &p,
+                            &keypair,
+                            &rpc,
+                            &api_key,
+                            slippage_bps,
+                            &pnl_path,
+                        )
+                        .await;
+                        if let Some(plan) = store.get_mut(&p.id) {
+                            match &result {
+                                Ok(sig) => {
+                                    plan.set_last_run(true, Some(sig.to_string()));
+                                    let utc8 = chrono::FixedOffset::east_opt(8 * 3600).unwrap();
+                                    eprintln!(
+                                        "计划 [{}] 执行成功，下次: {}",
+                                        plan.name,
+                                        plan.next_run_at.with_timezone(&utc8).format("%Y-%m-%d %H:%M (UTC+8)")
+                                    );
+                                }
+                                Err(e) => {
+                                    plan.set_last_run(false, Some(e.to_string()));
+                                    eprintln!("计划 [{}] 执行失败（已记录，下次仍按周期执行）: {}", plan.name, e);
+                                }
+                            }
+                        }
+                        if let Err(e) = store.save_to_path(&plans_path) {
+                            eprintln!("保存计划失败: {}", e);
+                        }
+                    }
+                    if once {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    store = plan::PlanStore::load_from_path(&plans_path)?;
                 }
-                if once {
-                    break;
+            } else {
+                let input_mint = cfg.input_mint_pubkey()?;
+                let output_mint = cfg.output_mint_pubkey()?;
+                let amount_raw = cfg.usdc_amount_raw();
+                loop {
+                    if let Err(e) = do_buy(
+                        &cfg,
+                        &keypair,
+                        &rpc,
+                        &api_key,
+                        input_mint,
+                        output_mint,
+                        amount_raw,
+                        slippage_bps,
+                    )
+                    .await
+                    {
+                        eprintln!("买入失败: {}", e);
+                    }
+                    if once {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_secs(cfg.interval_secs)).await;
                 }
-                tokio::time::sleep(Duration::from_secs(cfg.interval_secs)).await;
             }
         }
 
@@ -187,6 +289,7 @@ async fn main() -> anyhow::Result<()> {
                 INPUT_DECIMALS,
                 OUTPUT_DECIMALS,
                 current_price_used,
+                None,
             );
 
             println!("========== DCA 收益统计 ==========");
@@ -210,9 +313,18 @@ async fn main() -> anyhow::Result<()> {
                 api_key: api_key.clone(),
                 last_message: tokio::sync::RwLock::new(String::new()),
             });
+            let state_scheduler = state.clone();
+            let plans_path = plans_path(&state.config);
+            tokio::spawn(async move {
+                loop {
+                    run_plan_cycle(state_scheduler.as_ref()).await;
+                    tokio::time::sleep(Duration::from_secs(15)).await;
+                }
+            });
             let app = web::router(state);
             let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
             println!("Web 界面: http://127.0.0.1:{}/", port);
+            println!("定投计划: 每 15 秒检查一次，计划文件: {}", plans_path.display());
             let listener = tokio::net::TcpListener::bind(addr).await?;
             axum::serve(listener, app).await?;
         }
@@ -255,6 +367,7 @@ async fn do_buy(
         output_amount_raw: quote.out_amount,
         price_per_unit,
         signature: sig.to_string(),
+        plan_id: None,
     };
 
     let path = pnl_path(cfg);

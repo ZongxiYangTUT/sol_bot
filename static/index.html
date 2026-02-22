@@ -98,6 +98,46 @@
     tr:last-child td { border-bottom: none; }
     .loading { color: var(--text-muted); }
     .empty { color: var(--text-muted); font-size: 0.9rem; padding: 1rem 0; }
+    .plan-card {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1rem;
+      margin-bottom: 0.75rem;
+    }
+    .plan-card h3 { font-size: 1rem; margin: 0 0 0.5rem 0; display: flex; align-items: center; gap: 0.5rem; }
+    .plan-badge { font-size: 0.7rem; padding: 0.2rem 0.5rem; border-radius: 4px; font-weight: 600; }
+    .plan-badge.on { background: rgba(63,185,80,0.2); color: var(--green); }
+    .plan-badge.off { background: rgba(139,148,158,0.2); color: var(--text-muted); }
+    .plan-meta { font-size: 0.8rem; color: var(--text-muted); margin: 0.5rem 0; }
+    .plan-actions { margin-top: 0.75rem; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+    .plan-actions button { font-size: 0.85rem; padding: 0.4rem 0.8rem; }
+    .plan-actions button.secondary { background: var(--border); color: var(--text); }
+    .plan-actions button.danger { background: rgba(248,81,73,0.2); color: var(--red); }
+    .plan-last-error { font-size: 0.85em; word-break: break-word; color: var(--text-muted); }
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+    }
+    .modal-overlay.show { display: flex; }
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.5rem;
+      min-width: 320px;
+      max-width: 90vw;
+    }
+    .modal h2 { font-size: 1.1rem; margin: 0 0 1rem 0; }
+    .modal label { display: block; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem; }
+    .modal input, .modal select { width: 100%; padding: 0.5rem; margin-bottom: 0.75rem; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font: inherit; }
+    .modal-actions { margin-top: 1rem; display: flex; gap: 0.5rem; justify-content: flex-end; }
+    .modal-actions button.secondary { background: var(--border); color: var(--text); }
   </style>
 </head>
 <body>
@@ -151,6 +191,15 @@
     </div>
 
     <div class="card">
+      <h2>定投计划</h2>
+      <p class="subtitle" style="margin-bottom: 0.75rem;">创建计划后，使用 <code>cargo run -- run</code> 会按计划定时执行；可在此开启/关闭或编辑计划。</p>
+      <button type="button" id="btnCreatePlan">创建计划</button>
+      <div id="plansList" style="margin-top: 1rem;">
+        <div class="loading">加载中…</div>
+      </div>
+    </div>
+
+    <div class="card">
       <h2>操作</h2>
       <p class="subtitle" style="margin-bottom: 0.75rem;">按配置金额（默认 10 USDC）立即买入一次</p>
       <button type="button" id="btnBuy">立即买入</button>
@@ -161,6 +210,29 @@
       <h2>最近买入记录</h2>
       <div id="buysTable">
         <div class="loading">加载中…</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="planModal">
+    <div class="modal">
+      <h2 id="planModalTitle">创建计划</h2>
+      <label>计划名称</label>
+      <input type="text" id="planName" placeholder="例如：SOL 定投计划" />
+      <label>每期金额 (USDC)</label>
+      <input type="number" id="planAmount" min="0.1" step="0.1" placeholder="10" />
+      <label>频率</label>
+      <select id="planInterval">
+        <option value="30">每30秒</option>
+        <option value="60">每分钟</option>
+        <option value="3600">每小时</option>
+        <option value="43200">每 12 小时</option>
+        <option value="86400" selected>每日</option>
+        <option value="604800">每周</option>
+      </select>
+      <div class="modal-actions">
+        <button type="button" class="secondary" id="planModalCancel">取消</button>
+        <button type="button" id="planModalSubmit">确定</button>
       </div>
     </div>
   </div>
@@ -178,6 +250,15 @@
     const btnBuy = document.getElementById('btnBuy');
     const buyMessageEl = document.getElementById('buyMessage');
     const buysTableEl = document.getElementById('buysTable');
+    const plansListEl = document.getElementById('plansList');
+    const planModal = document.getElementById('planModal');
+    const planModalTitle = document.getElementById('planModalTitle');
+    const planName = document.getElementById('planName');
+    const planAmount = document.getElementById('planAmount');
+    const planInterval = document.getElementById('planInterval');
+    const planModalCancel = document.getElementById('planModalCancel');
+    const planModalSubmit = document.getElementById('planModalSubmit');
+    let editingPlanId = null;
 
     async function get(path) {
       const r = await fetch(path);
@@ -185,10 +266,26 @@
       return r.json();
     }
 
-    async function post(path) {
-      const r = await fetch(path, { method: 'POST' });
+    async function post(path, body) {
+      const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body ? JSON.stringify(body) : undefined });
       if (!r.ok) throw new Error(await r.text());
       return r.json();
+    }
+    async function patch(path, body) {
+      const r = await fetch(path, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+    async function del(path) {
+      const r = await fetch(path, { method: 'DELETE' });
+      if (!r.ok && r.status !== 204) throw new Error(await r.text());
+    }
+    function formatInterval(secs) {
+      if (secs < 60) return secs + ' 秒';
+      if (secs < 3600) return (secs / 60) + ' 分钟';
+      if (secs < 86400) return (secs / 3600) + ' 小时';
+      if (secs < 604800) return (secs / 86400) + ' 天';
+      return (secs / 604800) + ' 周';
     }
 
     function showBuyMessage(text, isError) {
@@ -240,15 +337,112 @@
       }
     }
 
+    async function refreshPlans() {
+      try {
+        const list = await get('/api/plans');
+        if (!list || list.length === 0) {
+          plansListEl.innerHTML = '<div class="empty">暂无计划，点击「创建计划」添加</div>';
+          return;
+        }
+        plansListEl.innerHTML = list.map(p => {
+          const pnlClass = p.pnl_absolute >= 0 ? 'positive' : 'negative';
+          const pnlStr = (p.pnl_absolute >= 0 ? '+' : '') + p.pnl_absolute.toFixed(2) + ' (' + (p.pnl_percent >= 0 ? '+' : '') + p.pnl_percent.toFixed(2) + '%)';
+          const lastRunMsg = p.last_run_message ? escapeHtml(p.last_run_message).replace(/"/g, '&quot;') : '';
+          const lastRunShort = p.last_run_message ? (escapeHtml(p.last_run_message).length > 60 ? escapeHtml(p.last_run_message).substring(0, 60) + '…' : escapeHtml(p.last_run_message)) : '';
+          const lastRun = p.last_run_at ? ('上次执行: ' + p.last_run_at + ' ' + (p.last_run_ok ? '<span class="stat-value positive">成功</span>' + (p.last_run_message ? ' · <span title="' + lastRunMsg + '">' + (p.last_run_message.length > 24 ? escapeHtml(p.last_run_message.substring(0, 24)) + '…' : escapeHtml(p.last_run_message)) + '</span>' : '') : '<span class="stat-value negative">失败</span>' + (lastRunMsg ? ' <span class="plan-last-error" title="' + lastRunMsg + '">' + lastRunShort + '</span>' : ''))) : '';
+          return '<div class="plan-card" data-id="' + p.id + '">' +
+            '<h3>' + escapeHtml(p.name) + ' <span class="plan-badge ' + (p.enabled ? 'on' : 'off') + '">' + (p.enabled ? '进行中' : '已暂停') + '</span></h3>' +
+            '<div class="plan-meta">每期 ' + p.amount_per_period + ' USDC → SOL · ' + formatInterval(p.interval_secs) + '</div>' +
+            '<div class="plan-meta">下次执行: ' + p.next_run_at + ' · 已触发 ' + p.trigger_count + ' 次</div>' +
+            (lastRun ? '<div class="plan-meta">' + lastRun + '</div>' : '') +
+            '<div class="plan-meta">总盈亏: <span class="stat-value ' + pnlClass + '">' + pnlStr + '</span></div>' +
+            '<div class="plan-actions">' +
+            '<button type="button" class="' + (p.enabled ? 'secondary' : '') + '" data-action="toggle" data-id="' + p.id + '" data-enabled="' + p.enabled + '">' + (p.enabled ? '暂停' : '开启') + '</button>' +
+            '<button type="button" class="secondary" data-action="edit" data-id="' + p.id + '">编辑</button>' +
+            '<button type="button" class="danger" data-action="delete" data-id="' + p.id + '">删除</button>' +
+            '</div></div>';
+        }).join('');
+        plansListEl.querySelectorAll('[data-action]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const id = btn.dataset.id;
+            if (btn.dataset.action === 'toggle') {
+              const enabled = btn.dataset.enabled === 'true';
+              try {
+                await patch('/api/plans/' + encodeURIComponent(id), { enabled: !enabled });
+                await refreshPlans();
+              } catch (e) { alert(e.message); }
+            } else if (btn.dataset.action === 'edit') {
+              const plan = list.find(x => x.id === id);
+              if (plan) { openPlanModal(plan); }
+            } else if (btn.dataset.action === 'delete') {
+              if (!confirm('确定删除该计划？')) return;
+              try {
+                await del('/api/plans/' + encodeURIComponent(id));
+                await refreshPlans();
+              } catch (e) { alert(e.message); }
+            }
+          });
+        });
+      } catch (e) {
+        plansListEl.innerHTML = '<div class="empty">加载失败</div>';
+      }
+    }
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+    function openPlanModal(plan) {
+      editingPlanId = plan ? plan.id : null;
+      planModalTitle.textContent = plan ? '修改计划' : '创建计划';
+      planName.value = plan ? plan.name : '';
+      planAmount.value = plan ? plan.amount_per_period : '';
+      if (plan && !planInterval.querySelector('option[value="' + plan.interval_secs + '"]')) {
+        var o = document.createElement('option');
+        o.value = plan.interval_secs;
+        o.textContent = formatInterval(plan.interval_secs);
+        planInterval.appendChild(o);
+      }
+      planInterval.value = plan ? String(plan.interval_secs) : '86400';
+      planModal.classList.add('show');
+    }
+    function closePlanModal() {
+      planModal.classList.remove('show');
+      editingPlanId = null;
+    }
+    planModalCancel.addEventListener('click', closePlanModal);
+    planModalSubmit.addEventListener('click', async () => {
+      const name = planName.value.trim();
+      const amount = parseFloat(planAmount.value);
+      const interval_secs = parseInt(planInterval.value, 10);
+      if (!name) { alert('请输入计划名称'); return; }
+      if (!(amount > 0)) { alert('请输入有效的每期金额'); return; }
+      planModalSubmit.disabled = true;
+      try {
+        if (editingPlanId) {
+          await patch('/api/plans/' + encodeURIComponent(editingPlanId), { name, amount_per_period: amount, interval_secs });
+        } else {
+          await post('/api/plans', { name, amount_per_period: amount, interval_secs });
+        }
+        closePlanModal();
+        await refreshPlans();
+      } catch (e) {
+        alert(e.message);
+      }
+      planModalSubmit.disabled = false;
+    });
+
+    document.getElementById('btnCreatePlan').addEventListener('click', () => openPlanModal(null));
+
     async function refresh() {
-      await Promise.all([refreshBalance(), refreshStats(), refreshBuys()]);
+      await Promise.all([refreshBalance(), refreshStats(), refreshBuys(), refreshPlans()]);
     }
 
     btnBuy.addEventListener('click', async () => {
       btnBuy.disabled = true;
       buyMessageEl.innerHTML = '';
       try {
-        const d = await post('/api/buy');
+        const d = await post('/api/buy', null);
         if (d.success) {
           showBuyMessage('买入成功 · tx: ' + (d.signature || ''), false);
           await refresh();
