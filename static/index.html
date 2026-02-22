@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Solana DCA Bot</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --text-muted: #8b949e;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --red: #f85149;
+      --radius: 10px;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "SF Mono", "Fira Code", "JetBrains Mono", monospace;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem 1rem;
+    }
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      margin: 0 0 0.5rem 0;
+      color: var(--accent);
+    }
+    .subtitle { color: var(--text-muted); font-size: 0.9rem; margin-bottom: 1.5rem; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+    }
+    .card h2 {
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      margin: 0 0 0.75rem 0;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 1rem;
+    }
+    .stat {
+      background: var(--bg);
+      padding: 0.75rem;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+    }
+    .stat-label { font-size: 0.75rem; color: var(--text-muted); }
+    .stat-value { font-size: 1.25rem; font-weight: 600; }
+    .stat-value.positive { color: var(--green); }
+    .stat-value.negative { color: var(--red); }
+    .wallet {
+      font-size: 0.8rem;
+      word-break: break-all;
+      color: var(--text-muted);
+    }
+    button {
+      font-family: inherit;
+      font-size: 0.95rem;
+      padding: 0.6rem 1.2rem;
+      background: var(--accent);
+      color: var(--bg);
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button:hover { filter: brightness(1.1); }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .message {
+      margin-top: 0.75rem;
+      padding: 0.5rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+    }
+    .message.success { background: rgba(63,185,80,0.15); color: var(--green); }
+    .message.error { background: rgba(248,81,73,0.15); color: var(--red); }
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--border); }
+    th { color: var(--text-muted); font-weight: 500; }
+    tr:last-child td { border-bottom: none; }
+    .loading { color: var(--text-muted); }
+    .empty { color: var(--text-muted); font-size: 0.9rem; padding: 1rem 0; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Solana DCA Bot</h1>
+    <p class="subtitle">用 USDC 定投买 SOL · 浏览器控制台</p>
+
+    <div class="card">
+      <h2>钱包余额</h2>
+      <div class="wallet" id="wallet">加载中…</div>
+      <div class="grid" style="margin-top: 0.75rem;">
+        <div class="stat">
+          <div class="stat-label">SOL</div>
+          <div class="stat-value" id="solBalance">–</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">USDC</div>
+          <div class="stat-value" id="usdcBalance">–</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>收益统计</h2>
+      <div class="grid">
+        <div class="stat">
+          <div class="stat-label">买入次数</div>
+          <div class="stat-value" id="totalBuys">–</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">累计投入 (USDC)</div>
+          <div class="stat-value" id="totalInput">–</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">累计获得 (SOL)</div>
+          <div class="stat-value" id="totalOutput">–</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">成本均价</div>
+          <div class="stat-value" id="avgCost">–</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">当前市值 (USDC)</div>
+          <div class="stat-value" id="currentValue">–</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">浮动盈亏</div>
+          <div class="stat-value" id="pnl">–</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>操作</h2>
+      <p class="subtitle" style="margin-bottom: 0.75rem;">按配置金额（默认 10 USDC）立即买入一次</p>
+      <button type="button" id="btnBuy">立即买入</button>
+      <div id="buyMessage"></div>
+    </div>
+
+    <div class="card">
+      <h2>最近买入记录</h2>
+      <div id="buysTable">
+        <div class="loading">加载中…</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const walletEl = document.getElementById('wallet');
+    const solBalanceEl = document.getElementById('solBalance');
+    const usdcBalanceEl = document.getElementById('usdcBalance');
+    const totalBuysEl = document.getElementById('totalBuys');
+    const totalInputEl = document.getElementById('totalInput');
+    const totalOutputEl = document.getElementById('totalOutput');
+    const avgCostEl = document.getElementById('avgCost');
+    const currentValueEl = document.getElementById('currentValue');
+    const pnlEl = document.getElementById('pnl');
+    const btnBuy = document.getElementById('btnBuy');
+    const buyMessageEl = document.getElementById('buyMessage');
+    const buysTableEl = document.getElementById('buysTable');
+
+    async function get(path) {
+      const r = await fetch(path);
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+
+    async function post(path) {
+      const r = await fetch(path, { method: 'POST' });
+      if (!r.ok) throw new Error(await r.text());
+      return r.json();
+    }
+
+    function showBuyMessage(text, isError) {
+      buyMessageEl.innerHTML = '<div class="message ' + (isError ? 'error' : 'success') + '">' + text + '</div>';
+    }
+
+    async function refreshBalance() {
+      try {
+        const d = await get('/api/balance');
+        walletEl.textContent = d.wallet;
+        solBalanceEl.textContent = d.sol_balance.toFixed(4) + ' SOL';
+        usdcBalanceEl.textContent = d.usdc_balance.toFixed(2) + ' USDC';
+      } catch (e) {
+        walletEl.textContent = '获取失败';
+        solBalanceEl.textContent = usdcBalanceEl.textContent = '–';
+      }
+    }
+
+    async function refreshStats() {
+      try {
+        const d = await get('/api/stats');
+        totalBuysEl.textContent = d.total_buys;
+        totalInputEl.textContent = d.total_input_human.toFixed(2);
+        totalOutputEl.textContent = d.total_output_human.toFixed(6);
+        avgCostEl.textContent = d.avg_cost_per_unit.toFixed(4);
+        currentValueEl.textContent = d.current_value_human.toFixed(2);
+        const pnlVal = d.pnl_absolute;
+        const pnlPct = d.pnl_percent;
+        pnlEl.textContent = (pnlVal >= 0 ? '+' : '') + pnlVal.toFixed(2) + ' (' + (pnlPct >= 0 ? '+' : '') + pnlPct.toFixed(2) + '%)';
+        pnlEl.className = 'stat-value ' + (pnlVal >= 0 ? 'positive' : 'negative');
+      } catch (e) {
+        totalBuysEl.textContent = totalInputEl.textContent = totalOutputEl.textContent = '–';
+        avgCostEl.textContent = currentValueEl.textContent = pnlEl.textContent = '–';
+      }
+    }
+
+    async function refreshBuys() {
+      try {
+        const d = await get('/api/buys');
+        if (!d.buys || d.buys.length === 0) {
+          buysTableEl.innerHTML = '<div class="empty">暂无买入记录</div>';
+          return;
+        }
+        buysTableEl.innerHTML = '<table><thead><tr><th>时间</th><th>USDC</th><th>SOL</th><th>单价</th><th>签名</th></tr></thead><tbody>' +
+          d.buys.map(b => '<tr><td>' + b.time + '</td><td>' + b.input_amount.toFixed(2) + '</td><td>' + b.output_amount.toFixed(6) + '</td><td>' + b.price_per_unit.toFixed(4) + '</td><td style="font-size:0.75rem;word-break:break-all">' + b.signature + '</td></tr>').join('') +
+          '</tbody></table>';
+      } catch (e) {
+        buysTableEl.innerHTML = '<div class="empty">加载失败</div>';
+      }
+    }
+
+    async function refresh() {
+      await Promise.all([refreshBalance(), refreshStats(), refreshBuys()]);
+    }
+
+    btnBuy.addEventListener('click', async () => {
+      btnBuy.disabled = true;
+      buyMessageEl.innerHTML = '';
+      try {
+        const d = await post('/api/buy');
+        if (d.success) {
+          showBuyMessage('买入成功 · tx: ' + (d.signature || ''), false);
+          await refresh();
+        } else {
+          showBuyMessage(d.error || '买入失败', true);
+        }
+      } catch (e) {
+        showBuyMessage(e.message || '请求失败', true);
+      }
+      btnBuy.disabled = false;
+    });
+
+    refresh();
+    setInterval(refresh, 30000);
+  </script>
+</body>
+</html>

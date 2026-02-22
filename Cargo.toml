@@ -1,0 +1,43 @@
+[package]
+name = "sol_bot"
+version = "0.1.0"
+edition = "2021"
+description = "Solana DCA Bot - 自动定投 USDC 买 SOL/SPL Token"
+authors = ["sol_bot"]
+license = "MIT"
+
+[dependencies]
+# Solana (版本需与 jup_ag 一致)
+solana-sdk = "3"
+solana-client = "3"
+
+# Jupiter Aggregator (crate 名 jup-ag，代码里用 jup_ag)
+jup-ag = "0.11"
+
+# Async & HTTP
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# HTTP（自定义 Quote 请求，便于先识别错误响应再解析）
+reqwest = { version = "0.11", features = ["json"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Time & scheduling
+chrono = { version = "0.4", features = ["serde"] }
+
+# Error handling
+anyhow = "1"
+thiserror = "2"
+
+# Config path
+dirs = "5"
+
+# Web 界面
+axum = { version = "0.7", features = ["json"] }
+tower-http = { version = "0.5", features = ["fs"] }
+tower = "0.4"

@@ -1,0 +1,22 @@
+# Cargo
+/target/
+**/*.rs.bk
+
+# 含密钥的配置（按需取消注释）
+# config.json
+# .env
+
+# IDE / Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 调试与日志
+*.log
+*.log.*
