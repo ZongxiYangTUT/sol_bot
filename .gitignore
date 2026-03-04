@@ -20,3 +20,4 @@ Thumbs.db
 # 调试与日志
 *.log
 *.log.*
+.env
