@@ -36,7 +36,7 @@ async fn get_quote_http(
         amount_raw,
         slippage_bps,
     );
-
+    // println!("url: {}", url);
     let client = reqwest::Client::builder()
         .build()
         .map_err(|e| SwapError::Rpc(anyhow::Error::msg(e.to_string())))?;
@@ -67,7 +67,10 @@ async fn get_quote_http(
         } else {
             ""
         };
-        return Err(SwapError::Jupiter(jup_ag::Error::JupiterApi(format!("{}{}", msg, hint))));
+        return Err(SwapError::Jupiter(jup_ag::Error::JupiterApi(format!(
+            "{}{}",
+            msg, hint
+        ))));
     }
 
     if value.get("inputMint").is_none() {
@@ -79,14 +82,17 @@ async fn get_quote_http(
             .unwrap_or_else(|| {
                 format!(
                     "API 返回格式异常（缺少 inputMint），可能为错误响应。原始片段: {}",
-                    serde_json::to_string(&value).unwrap_or_else(|_| "?".to_string()).chars().take(200).collect::<String>()
+                    serde_json::to_string(&value)
+                        .unwrap_or_else(|_| "?".to_string())
+                        .chars()
+                        .take(200)
+                        .collect::<String>()
                 )
             });
         return Err(SwapError::Jupiter(jup_ag::Error::JupiterApi(msg)));
     }
 
-    let quote: Quote = serde_json::from_value(value)
-        .map_err(|e| SwapError::Jupiter(e.into()))?;
+    let quote: Quote = serde_json::from_value(value).map_err(|e| SwapError::Jupiter(e.into()))?;
     Ok(quote)
 }
 
@@ -118,8 +124,7 @@ pub async fn execute_swap(
     let mut message = swap_result.swap_transaction.message;
     message.set_recent_blockhash(recent_blockhash);
 
-    let tx = VersionedTransaction::try_new(message, &[keypair])
-        .map_err(|_| SwapError::Sign)?;
+    let tx = VersionedTransaction::try_new(message, &[keypair]).map_err(|_| SwapError::Sign)?;
 
     let sig = rpc.send_transaction(&tx)?;
     Ok(sig)

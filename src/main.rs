@@ -67,10 +67,18 @@ fn load_config(cli: &Cli) -> anyhow::Result<Config> {
     } else {
         base
     };
-    if let Some(url) = cli.rpc_url.clone().or_else(|| std::env::var("SOLANA_RPC_URL").ok()) {
+    if let Some(url) = cli
+        .rpc_url
+        .clone()
+        .or_else(|| std::env::var("SOLANA_RPC_URL").ok())
+    {
         cfg.rpc_url = url;
     }
-    if let Some(kp) = cli.keypair.clone().or_else(|| std::env::var("SOLANA_KEYPAIR_PATH").ok().map(PathBuf::from)) {
+    if let Some(kp) = cli
+        .keypair
+        .clone()
+        .or_else(|| std::env::var("SOLANA_KEYPAIR_PATH").ok().map(PathBuf::from))
+    {
         cfg.keypair_path = kp;
     }
     if cfg.jupiter_api_key.as_deref().unwrap_or("").is_empty() {
@@ -126,7 +134,10 @@ async fn run_plan_cycle(state: &web::AppState) {
             match &result {
                 Ok(sig) => {
                     plan.set_last_run(true, Some(sig.to_string()));
-                    eprintln!("[定投调度] 计划 [{}] 执行成功，已触发 {} 次", plan.name, plan.trigger_count);
+                    eprintln!(
+                        "[定投调度] 计划 [{}] 执行成功，已触发 {} 次",
+                        plan.name, plan.trigger_count
+                    );
                 }
                 Err(e) => {
                     plan.set_last_run(false, Some(e.to_string()));
@@ -142,19 +153,20 @@ async fn run_plan_cycle(state: &web::AppState) {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenv::dotenv().ok();
     let cli = Cli::parse();
     let cfg = load_config(&cli)?;
 
     cfg.apply_jupiter_env();
     std::fs::create_dir_all(&cfg.data_dir)?;
     if cli.devnet {
-        eprintln!("[Devnet] 使用测试网: RPC={}, 数据目录={}", cfg.rpc_url, cfg.data_dir.display());
+        eprintln!(
+            "[Devnet] 使用测试网: RPC={}, 数据目录={}",
+            cfg.rpc_url,
+            cfg.data_dir.display()
+        );
     }
-    let api_key = cfg
-        .jupiter_api_key
-        .as_deref()
-        .unwrap_or("")
-        .to_string();
+    let api_key = cfg.jupiter_api_key.as_deref().unwrap_or("").to_string();
 
     match cli.command {
         Commands::Run { once } => {
@@ -190,12 +202,17 @@ async fn main() -> anyhow::Result<()> {
                                     eprintln!(
                                         "计划 [{}] 执行成功，下次: {}",
                                         plan.name,
-                                        plan.next_run_at.with_timezone(&utc8).format("%Y-%m-%d %H:%M (UTC+8)")
+                                        plan.next_run_at
+                                            .with_timezone(&utc8)
+                                            .format("%Y-%m-%d %H:%M (UTC+8)")
                                     );
                                 }
                                 Err(e) => {
                                     plan.set_last_run(false, Some(e.to_string()));
-                                    eprintln!("计划 [{}] 执行失败（已记录，下次仍按周期执行）: {}", plan.name, e);
+                                    eprintln!(
+                                        "计划 [{}] 执行失败（已记录，下次仍按周期执行）: {}",
+                                        plan.name, e
+                                    );
                                 }
                             }
                         }
@@ -268,21 +285,20 @@ async fn main() -> anyhow::Result<()> {
 
             // 当前价：用 Jupiter 或 RPC 查；这里简化为用最近一笔买入价近似，或从 RPC 取余额 * 市价
             // 更准确做法是调 Jupiter price API；此处用最后一笔成交价作为「当前价」近似
-            let current_price = store
-                .buys
-                .last()
-                .map(|b| b.price_per_unit)
-                .unwrap_or(0.0);
+            let current_price = store.buys.last().map(|b| b.price_per_unit).unwrap_or(0.0);
 
             // 若有输出 token 余额，可用 get_token_balance 配合外部价格；此处用历史均价
             let (current_price_used, current_value_msg) = if current_price > 0.0 {
-                (current_price, format!("(当前价近似 {:.4} USDC/单位)", current_price))
+                (
+                    current_price,
+                    format!("(当前价近似 {:.4} USDC/单位)", current_price),
+                )
             } else {
                 (0.0, "(无历史买入，无法估算当前价)".to_string())
             };
 
-            const INPUT_DECIMALS: u8 = 6;  // USDC
-            const OUTPUT_DECIMALS: u8 = 9;  // SOL
+            const INPUT_DECIMALS: u8 = 6; // USDC
+            const OUTPUT_DECIMALS: u8 = 9; // SOL
 
             let summary = pnl::compute_pnl(
                 &store,
@@ -299,7 +315,10 @@ async fn main() -> anyhow::Result<()> {
             println!("成本均价: {:.4} USDC/单位", summary.avg_cost_per_unit);
             println!("当前价: {} {}", current_price_used, current_value_msg);
             println!("当前市值 (USDC): {:.2}", summary.current_value_human);
-            println!("浮动盈亏: {:.2} USDC ({:.2}%)", summary.pnl_absolute, summary.pnl_percent);
+            println!(
+                "浮动盈亏: {:.2} USDC ({:.2}%)",
+                summary.pnl_absolute, summary.pnl_percent
+            );
             println!("====================================");
         }
 
@@ -324,7 +343,10 @@ async fn main() -> anyhow::Result<()> {
             let app = web::router(state);
             let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));
             println!("Web 界面: http://127.0.0.1:{}/", port);
-            println!("定投计划: 每 15 秒检查一次，计划文件: {}", plans_path.display());
+            println!(
+                "定投计划: 每 15 秒检查一次，计划文件: {}",
+                plans_path.display()
+            );
             let listener = tokio::net::TcpListener::bind(addr).await?;
             axum::serve(listener, app).await?;
         }
